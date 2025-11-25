@@ -48,7 +48,7 @@ export const VehicleEditModal: React.FC<VehicleEditModalProps> = ({ vehicle, onC
         
         const { error: insertError } = await supabase
           .from('vehicles')
-          .insert(insertData);
+          .insert(insertData as any);
 
         if (insertError) throw insertError;
       } else {
@@ -66,7 +66,7 @@ export const VehicleEditModal: React.FC<VehicleEditModalProps> = ({ vehicle, onC
 
         const { error: updateError } = await supabase
           .from('vehicles')
-          .update(updateData)
+          .update(updateData as any)
           .eq('id', vehicle.id);
 
         if (updateError) throw updateError;
