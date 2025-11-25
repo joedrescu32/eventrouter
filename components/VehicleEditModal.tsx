@@ -46,9 +46,10 @@ export const VehicleEditModal: React.FC<VehicleEditModalProps> = ({ vehicle, onC
           }
         });
         
+        // @ts-expect-error - Database types are generic, Supabase validates at runtime
         const { error: insertError } = await supabase
           .from('vehicles')
-          .insert(insertData as any);
+          .insert(insertData);
 
         if (insertError) throw insertError;
       } else {
@@ -64,9 +65,10 @@ export const VehicleEditModal: React.FC<VehicleEditModalProps> = ({ vehicle, onC
           }
         });
 
+        // @ts-expect-error - Database types are generic, Supabase validates at runtime
         const { error: updateError } = await supabase
           .from('vehicles')
-          .update(updateData as any)
+          .update(updateData)
           .eq('id', vehicle.id);
 
         if (updateError) throw updateError;
