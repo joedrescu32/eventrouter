@@ -1,14 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import OpenAI from 'openai';
-import * as pdfjsLib from 'pdfjs-dist';
-import { createCanvas } from 'canvas';
-import { readFileSync } from 'fs';
-import { join } from 'path';
 
-// Configure pdfjs worker for server-side - use local worker file
-const workerPath = join(process.cwd(), 'node_modules', 'pdfjs-dist', 'build', 'pdf.worker.min.mjs');
-pdfjsLib.GlobalWorkerOptions.workerSrc = workerPath;
+// Note: This route is deprecated - we now use Zapier for document parsing
+// This route is disabled to prevent build errors with canvas/pdfjs-dist in serverless environments
 
+/* DISABLED CODE - All helper functions commented out to prevent build errors
 // Configure which OpenAI model to use (default: gpt-4o)
 // Options: 'gpt-4o', 'gpt-5.1', 'gpt-5-mini', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-4', 'gpt-3.5-turbo'
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
@@ -90,8 +85,20 @@ async function readFileContent(file: File): Promise<string> {
   // Default: try to read as text
   return await file.text();
 }
+*/
 
 export async function POST(request: NextRequest) {
+  // This route is deprecated - document parsing is now handled by Zapier
+  return NextResponse.json(
+    {
+      success: false,
+      error: 'This endpoint is deprecated. Document parsing is now handled by Zapier webhook integration.',
+      message: 'Please use the Zapier webhook flow instead.',
+    },
+    { status: 410 } // 410 Gone - indicates the resource is no longer available
+  );
+  
+  /* DISABLED CODE - Keeping for reference
   console.log('=== PARSE DOCUMENTS API CALLED ===');
   
   try {
@@ -380,5 +387,6 @@ ${fileContent.substring(0, 15000)}`;
       { status: 500 }
     );
   }
+  */
 }
 
