@@ -38,9 +38,17 @@ export const VehicleEditModal: React.FC<VehicleEditModalProps> = ({ vehicle, onC
 
     try {
       if (isNew) {
+        // Filter out undefined values and ensure required fields
+        const insertData: any = {};
+        Object.entries(formData).forEach(([key, value]) => {
+          if (value !== undefined && value !== null) {
+            insertData[key] = value;
+          }
+        });
+        
         const { error: insertError } = await supabase
           .from('vehicles')
-          .insert(formData as VehicleInsert);
+          .insert(insertData);
 
         if (insertError) throw insertError;
       } else {
@@ -48,9 +56,17 @@ export const VehicleEditModal: React.FC<VehicleEditModalProps> = ({ vehicle, onC
           throw new Error('Vehicle ID is required for update');
         }
 
+        // Filter out undefined values
+        const updateData: any = {};
+        Object.entries(formData).forEach(([key, value]) => {
+          if (value !== undefined && value !== null) {
+            updateData[key] = value;
+          }
+        });
+
         const { error: updateError } = await supabase
           .from('vehicles')
-          .update(formData as VehicleUpdate)
+          .update(updateData)
           .eq('id', vehicle.id);
 
         if (updateError) throw updateError;
