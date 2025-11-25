@@ -141,9 +141,13 @@ export const ParsedOrdersModal: React.FC<ParsedOrdersModalProps> = ({ items, onC
                         <div className="text-xs text-subtle">{item.venue_address}</div>
                       </div>
                       {item.venue_match ? (
-                        <CheckCircle2 size={16} className="text-green-500" title="Venue matched" />
+                        <div title="Venue matched">
+                          <CheckCircle2 size={16} className="text-green-500" />
+                        </div>
                       ) : (
-                        <AlertCircle size={16} className="text-yellow-500" title="Venue needs input" />
+                        <div title="Venue needs input">
+                          <AlertCircle size={16} className="text-yellow-500" />
+                        </div>
                       )}
                     </div>
                   </td>
@@ -151,9 +155,13 @@ export const ParsedOrdersModal: React.FC<ParsedOrdersModalProps> = ({ items, onC
                     <div className="flex items-center gap-2">
                       <div className="text-sm font-medium text-primary">{item.item_name}</div>
                       {item.product_match ? (
-                        <CheckCircle2 size={16} className="text-green-500" title="Product matched" />
+                        <div title="Product matched">
+                          <CheckCircle2 size={16} className="text-green-500" />
+                        </div>
                       ) : (
-                        <AlertCircle size={16} className="text-yellow-500" title="Product needs input" />
+                        <div title="Product needs input">
+                          <AlertCircle size={16} className="text-yellow-500" />
+                        </div>
                       )}
                     </div>
                   </td>
