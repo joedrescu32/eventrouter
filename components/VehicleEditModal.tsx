@@ -1,7 +1,7 @@
 'use client';
 import React, { useState, useEffect } from 'react';
 import { X, Save, Loader2 } from 'lucide-react';
-import { Vehicle } from '../types/database.types';
+import { Vehicle, VehicleInsert, VehicleUpdate } from '../types/database.types';
 import { supabase } from '../lib/supabase';
 
 interface VehicleEditModalProps {
@@ -40,7 +40,7 @@ export const VehicleEditModal: React.FC<VehicleEditModalProps> = ({ vehicle, onC
       if (isNew) {
         const { error: insertError } = await supabase
           .from('vehicles')
-          .insert(formData);
+          .insert(formData as VehicleInsert);
 
         if (insertError) throw insertError;
       } else {
@@ -50,7 +50,7 @@ export const VehicleEditModal: React.FC<VehicleEditModalProps> = ({ vehicle, onC
 
         const { error: updateError } = await supabase
           .from('vehicles')
-          .update(formData)
+          .update(formData as VehicleUpdate)
           .eq('id', vehicle.id);
 
         if (updateError) throw updateError;
