@@ -3,6 +3,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { UploadCloud, FileSpreadsheet, Server, Globe, Send, Sparkles, Bot, User, X, File, Route, FileText, Loader2 } from 'lucide-react';
 import { Message, UploadedFile, ParsedOrderItem } from '../types';
 import { ParsedOrdersModal } from './ParsedOrdersModal';
+import { supabase } from '../lib/supabase';
 
 interface IngestViewProps {
   input: string;
@@ -124,8 +125,12 @@ export const IngestView: React.FC<IngestViewProps> = ({ input, setInput, onComma
         throw new Error(errorMsg);
       }
 
-      // Show success message and start polling for results
+      // Show success message
       alert(`Successfully sent ${uploadedFiles.length} file(s) to webhook. Waiting for parsing results...`);
+      
+      // Show modal immediately with loading state
+      setParsedItems([]); // Empty items = loading state
+      setShowParsedModal(true);
       
       // Start polling for parsed results
       pollForParsedResults();
@@ -140,22 +145,59 @@ export const IngestView: React.FC<IngestViewProps> = ({ input, setInput, onComma
     }
   };
 
-  // Poll for parsed results from Zapier
+  // Poll for parsed results from Supabase (where Zapier writes them)
   const pollForParsedResults = async () => {
     const maxAttempts = 60; // Poll for up to 5 minutes (60 * 5 seconds)
     let attempts = 0;
 
     const poll = async () => {
       try {
-        const response = await fetch(`/api/receive-parsed-orders?session_id=${sessionId}`);
-        
-        if (response.ok) {
-          const data = await response.json();
-          if (data.success && data.items && data.items.length > 0) {
-            console.log('✅ Received parsed orders:', data.items);
-            setParsedItems(data.items);
+        // Poll Supabase for parsed orders with this session_id
+        // @ts-ignore - Database types are generic
+        const { data, error } = await supabase
+          .from('parsed_orders')
+          .select('*')
+          .eq('session_id', sessionId)
+          .eq('processed', false)
+          .order('created_at', { ascending: false })
+          .limit(1);
+
+        if (error) {
+          console.error('Error polling Supabase:', error);
+          attempts++;
+          if (attempts < maxAttempts) {
+            setTimeout(poll, 5000);
+          } else {
+            setParsing(false);
+          }
+          return;
+        }
+
+        if (data && data.length > 0) {
+          const orderData: any = data[0];
+          console.log('✅ Received parsed orders from Supabase:', orderData);
+          
+          // Extract items from the JSONB field
+          let items: ParsedOrderItem[] = [];
+          if (Array.isArray(orderData.items)) {
+            items = orderData.items;
+          } else if (orderData.items && Array.isArray(orderData.items.items)) {
+            items = orderData.items.items;
+          }
+
+          if (items.length > 0) {
+            setParsedItems(items);
             setShowParsedModal(true);
             setParsing(false);
+            
+            // Mark as processed
+            // @ts-ignore - Database types are generic
+            await supabase
+              .from('parsed_orders')
+              // @ts-ignore - Database types are generic
+              .update({ processed: true })
+              .eq('id', orderData.id);
+            
             return; // Stop polling
           }
         }
@@ -186,15 +228,19 @@ export const IngestView: React.FC<IngestViewProps> = ({ input, setInput, onComma
 
   const handleSaveParsedOrders = async (items: ParsedOrderItem[]) => {
     console.log('Saving confirmed parsed orders:', items);
-    // TODO: Save to database/Supabase
+    // TODO: Save to database/Supabase orders table
     // For now, just close modal
     setShowParsedModal(false);
     setParsedItems([]);
     
-    // Clear the stored results
-    await fetch(`/api/receive-parsed-orders?session_id=${sessionId}`, {
-      method: 'DELETE',
-    });
+    // Mark all parsed orders for this session as processed (already done in poll, but just in case)
+    // @ts-ignore - Database types are generic
+    await supabase
+      .from('parsed_orders')
+      // @ts-ignore - Database types are generic
+      .update({ processed: true })
+      .eq('session_id', sessionId)
+      .eq('processed', false);
   };
 
   const getFileIcon = (type: string, name: string) => {

@@ -16,6 +16,13 @@ export const ParsedOrdersModal: React.FC<ParsedOrdersModalProps> = ({ items, onC
   const [editingItem, setEditingItem] = useState<string | null>(null);
 
   useEffect(() => {
+    // If items array is empty, we're still loading
+    if (items.length === 0) {
+      setLoading(true);
+      setProcessedItems([]);
+      return;
+    }
+
     // Add IDs to items for React keys
     const itemsWithIds = items.map((item, index) => ({
       ...item,

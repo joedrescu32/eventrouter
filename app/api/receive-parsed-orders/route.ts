@@ -2,23 +2,30 @@ import { NextRequest, NextResponse } from 'next/server';
 
 // In-memory storage for parsed orders (in production, use a database or cache like Redis)
 // Key: sessionId, Value: parsed orders data
+// Note: In serverless environments (Vercel), this is ephemeral and will reset on each cold start
+// For production, consider using Supabase or Redis for persistent storage
 const parsedOrdersStore = new Map<string, {
   items: any[];
   receivedAt: Date;
 }>();
 
 // Clean up old entries (older than 1 hour)
-setInterval(() => {
+// Note: setInterval doesn't work in serverless environments, so cleanup happens on-demand
+// For production, use a scheduled job or database TTL
+function cleanupOldEntries() {
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
   for (const [sessionId, data] of parsedOrdersStore.entries()) {
     if (data.receivedAt < oneHourAgo) {
       parsedOrdersStore.delete(sessionId);
     }
   }
-}, 60 * 60 * 1000); // Run every hour
+}
 
 export async function POST(request: NextRequest) {
   console.log('=== RECEIVE PARSED ORDERS API CALLED ===');
+  
+  // Clean up old entries before processing
+  cleanupOldEntries();
   
   try {
     const body = await request.json();
@@ -111,6 +118,9 @@ export async function POST(request: NextRequest) {
 
 // GET endpoint to retrieve parsed orders for a session
 export async function GET(request: NextRequest) {
+  // Clean up old entries before retrieving
+  cleanupOldEntries();
+  
   const searchParams = request.nextUrl.searchParams;
   const sessionId = searchParams.get('session_id') || 'default';
 
