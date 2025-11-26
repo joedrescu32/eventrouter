@@ -1,9 +1,8 @@
 'use client';
 import React, { useState, useRef, useEffect } from 'react';
 import { UploadCloud, FileSpreadsheet, Server, Globe, Send, Sparkles, Bot, User, X, File, Route, FileText, Loader2 } from 'lucide-react';
-import { Message, UploadedFile, ParsedOrderItem } from '../types';
+import { Message, UploadedFile, ParsedOrder, ParsedOrderItem } from '../types';
 import { ParsedOrdersModal } from './ParsedOrdersModal';
-import { supabase } from '../lib/supabase';
 
 interface IngestViewProps {
   input: string;
@@ -13,11 +12,14 @@ interface IngestViewProps {
   messages: Message[];
 }
 
+type LoadingStage = 'idle' | 'uploading' | 'sending' | 'processing' | 'complete';
+
 export const IngestView: React.FC<IngestViewProps> = ({ input, setInput, onCommand, isAiThinking, messages }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [parsing, setParsing] = useState(false);
-  const [parsedItems, setParsedItems] = useState<ParsedOrderItem[]>([]);
+  const [loadingStage, setLoadingStage] = useState<LoadingStage>('idle');
+  const [parsedItems, setParsedItems] = useState<ParsedOrder[] | ParsedOrderItem[]>([]);
   const [showParsedModal, setShowParsedModal] = useState(false);
   const [sessionId] = useState(() => `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -92,6 +94,7 @@ export const IngestView: React.FC<IngestViewProps> = ({ input, setInput, onComma
     console.log('🚀 Sending files to webhook...');
     console.log(`Files to send: ${uploadedFiles.length}`, uploadedFiles.map(f => f.name));
     setParsing(true);
+    setLoadingStage('uploading');
 
     try {
       // Create FormData with all files
@@ -99,6 +102,11 @@ export const IngestView: React.FC<IngestViewProps> = ({ input, setInput, onComma
       uploadedFiles.forEach(file => {
         formData.append('files', file.file);
       });
+
+      // Show modal immediately with loading state
+      setParsedItems([]); // Empty items = loading state
+      setShowParsedModal(true);
+      setLoadingStage('sending');
 
       // Send files to our API route which will forward to webhook
       console.log('📤 Sending files to API route...');
@@ -125,12 +133,8 @@ export const IngestView: React.FC<IngestViewProps> = ({ input, setInput, onComma
         throw new Error(errorMsg);
       }
 
-      // Show success message
-      alert(`Successfully sent ${uploadedFiles.length} file(s) to webhook. Waiting for parsing results...`);
-      
-      // Show modal immediately with loading state
-      setParsedItems([]); // Empty items = loading state
-      setShowParsedModal(true);
+      // Files sent successfully, now waiting for Zapier to process
+      setLoadingStage('processing');
       
       // Start polling for parsed results
       pollForParsedResults();
@@ -139,66 +143,88 @@ export const IngestView: React.FC<IngestViewProps> = ({ input, setInput, onComma
       setUploadedFiles([]);
     } catch (error) {
       console.error('Error sending files to webhook:', error);
+      setLoadingStage('idle');
+      setShowParsedModal(false);
       alert(`Failed to send files to webhook: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
       setParsing(false);
     }
   };
 
-  // Poll for parsed results from Supabase (where Zapier writes them)
+  // Poll for parsed results from API (where Zapier sends them)
   const pollForParsedResults = async () => {
     const maxAttempts = 60; // Poll for up to 5 minutes (60 * 5 seconds)
     let attempts = 0;
 
     const poll = async () => {
       try {
-        // Poll Supabase for parsed orders with this session_id
-        // @ts-ignore - Database types are generic
-        const { data, error } = await supabase
-          .from('parsed_orders')
-          .select('*')
-          .eq('session_id', sessionId)
-          .eq('processed', false)
-          .order('created_at', { ascending: false })
-          .limit(1);
-
-        if (error) {
-          console.error('Error polling Supabase:', error);
+        console.log(`[Poll ${attempts + 1}/${maxAttempts}] Checking for session_id: ${sessionId}`);
+        
+        // Poll API endpoint for parsed orders with this session_id
+        const response = await fetch(`/api/receive-parsed-orders?session_id=${sessionId}`);
+        
+        if (!response.ok) {
+          if (response.status === 404) {
+            // Not found yet, keep polling
+            const errorData = await response.json().catch(() => ({}));
+            console.log(`[Poll ${attempts + 1}] Not found yet. Available sessions:`, errorData.available_sessions);
+            
+            attempts++;
+            if (attempts < maxAttempts) {
+              setTimeout(poll, 5000);
+            } else {
+              console.warn('❌ Polling timeout: No parsed results received after', maxAttempts * 5, 'seconds');
+              console.warn('Session ID was:', sessionId);
+              setParsing(false);
+              setLoadingStage('idle');
+              setShowParsedModal(false);
+              alert('Parsing is taking longer than expected. Please check the browser console for details or try again.');
+            }
+            return;
+          }
+          // Other error
+          const errorData = await response.json().catch(() => ({}));
+          console.error(`[Poll ${attempts + 1}] Error polling API:`, response.status, errorData);
           attempts++;
           if (attempts < maxAttempts) {
             setTimeout(poll, 5000);
           } else {
             setParsing(false);
+            setLoadingStage('idle');
+            setShowParsedModal(false);
+            alert('Error receiving parsed data. Please check the browser console.');
           }
           return;
         }
 
-        if (data && data.length > 0) {
-          const orderData: any = data[0];
-          console.log('✅ Received parsed orders from Supabase:', orderData);
-          
-          // Extract items from the JSONB field
-          let items: ParsedOrderItem[] = [];
-          if (Array.isArray(orderData.items)) {
-            items = orderData.items;
-          } else if (orderData.items && Array.isArray(orderData.items.items)) {
-            items = orderData.items.items;
-          }
+        const result = await response.json();
+        console.log(`[Poll ${attempts + 1}] Response:`, result);
+        
+        if (result.success && result.items) {
+          // Items can be in new format (ParsedOrder[]) or old format (ParsedOrderItem[])
+          const items: ParsedOrder[] | ParsedOrderItem[] = result.items;
 
           if (items.length > 0) {
+            console.log('✅ Received parsed orders from API:', items);
             setParsedItems(items);
             setShowParsedModal(true);
+            setLoadingStage('complete');
             setParsing(false);
             
-            // Mark as processed
-            // @ts-ignore - Database types are generic
-            await supabase
-              .from('parsed_orders')
-              // @ts-ignore - Database types are generic
-              .update({ processed: true })
-              .eq('id', orderData.id);
-            
             return; // Stop polling
+          } else {
+            console.warn(`[Poll ${attempts + 1}] Items array is empty. Response:`, result);
+            // Keep polling if items array is empty but success is true (might be processing)
+            attempts++;
+            if (attempts < maxAttempts) {
+              setTimeout(poll, 5000);
+            } else {
+              console.warn('❌ Polling timeout: Items array remained empty');
+              setParsing(false);
+              setLoadingStage('idle');
+              setShowParsedModal(false);
+              alert('Received response but no items found. Please check Zapier output format.');
+            }
+            return;
           }
         }
 
@@ -209,6 +235,8 @@ export const IngestView: React.FC<IngestViewProps> = ({ input, setInput, onComma
         } else {
           console.warn('Polling timeout: No parsed results received');
           setParsing(false);
+          setLoadingStage('idle');
+          setShowParsedModal(false);
           alert('Parsing is taking longer than expected. Please check back later or try again.');
         }
       } catch (error) {
@@ -218,6 +246,8 @@ export const IngestView: React.FC<IngestViewProps> = ({ input, setInput, onComma
           setTimeout(poll, 5000);
         } else {
           setParsing(false);
+          setLoadingStage('idle');
+          setShowParsedModal(false);
         }
       }
     };
@@ -226,21 +256,21 @@ export const IngestView: React.FC<IngestViewProps> = ({ input, setInput, onComma
     setTimeout(poll, 5000);
   };
 
-  const handleSaveParsedOrders = async (items: ParsedOrderItem[]) => {
+  const handleSaveParsedOrders = async (items: ParsedOrder[] | ParsedOrderItem[]) => {
     console.log('Saving confirmed parsed orders:', items);
-    // TODO: Save to database/Supabase orders table
-    // For now, just close modal
+    // TODO: Save to database/orders table if needed
+    // For now, just close modal and clear the stored data
     setShowParsedModal(false);
     setParsedItems([]);
     
-    // Mark all parsed orders for this session as processed (already done in poll, but just in case)
-    // @ts-ignore - Database types are generic
-    await supabase
-      .from('parsed_orders')
-      // @ts-ignore - Database types are generic
-      .update({ processed: true })
-      .eq('session_id', sessionId)
-      .eq('processed', false);
+    // Clear the stored data from the API
+    try {
+      await fetch(`/api/receive-parsed-orders?session_id=${sessionId}`, {
+        method: 'DELETE',
+      });
+    } catch (error) {
+      console.error('Error clearing parsed orders:', error);
+    }
   };
 
   const getFileIcon = (type: string, name: string) => {
@@ -490,9 +520,11 @@ export const IngestView: React.FC<IngestViewProps> = ({ input, setInput, onComma
       {showParsedModal && (
         <ParsedOrdersModal
           items={parsedItems}
+          loadingStage={loadingStage}
           onClose={() => {
             setShowParsedModal(false);
             setParsedItems([]);
+            setLoadingStage('idle');
           }}
           onSave={handleSaveParsedOrders}
         />

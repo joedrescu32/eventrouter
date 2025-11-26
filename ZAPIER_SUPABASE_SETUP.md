@@ -19,88 +19,50 @@ Since Zapier doesn't have a native Supabase integration, you have **two options*
 
 ---
 
-### Option A: Use Code by Zapier (Recommended - No local server needed)
+### Option A: Use Webhooks by Zapier (Recommended - Simplest!)
 
-Use **Code by Zapier** to call Supabase's REST API directly.
+Use **Webhooks by Zapier** to call your Vercel app API. No code needed!
 
 #### Setup:
 
-1. **Get Supabase Credentials:**
-   - In Supabase dashboard, go to **Settings** → **API**
-   - Copy **Project URL**: `https://xxxxx.supabase.co`
-   - Copy **anon/public key**: `eyJhbGc...` (the long JWT token)
+1. **In Zapier, after ChatGPT step, add "Webhooks by Zapier":**
+   - Action: **"POST"**
+   - URL: `https://eventrouter.vercel.app/api/receive-parsed-orders`
+   - Method: **POST**
+   - Data Pass-Through: **No**
 
-2. **In Zapier, after ChatGPT step, add "Code by Zapier":**
-   - Action: "Run Javascript"
-   - Paste this code (replace `YOUR_SUPABASE_URL` and `YOUR_SUPABASE_ANON_KEY`):
+2. **Configure the Data (JSON):**
 
-```javascript
-// Supabase credentials - REPLACE THESE
-const SUPABASE_URL = 'YOUR_SUPABASE_URL'; // e.g., https://xxxxx.supabase.co
-const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY'; // Your anon/public key
+   Click "Continue" and set up the JSON payload. You can either:
 
-// Get data from previous steps
-const sessionId = inputData.session_id || 'default';
-let items = [];
+   **Option A: Use JSON format (Recommended)**
+   ```json
+   {
+     "session_id": "{{session_id}}",
+     "items": {{ChatGPT Output}}
+   }
+   ```
+   
+   **Option B: Use individual fields**
+   - `session_id`: `{{session_id}}` (from webhook trigger - first step)
+   - `items`: `{{ChatGPT Output}}` (or whatever field name your ChatGPT step uses)
+   - `chatgpt_output`: `{{ChatGPT Output}}` (as backup if items format is different)
 
-// Parse ChatGPT output (adjust field name based on your ChatGPT step)
-const chatgptOutput = inputData.chatgpt_output || inputData.message || inputData.content || inputData.text;
+3. **Headers (Optional - usually not needed):**
+   - `Content-Type`: `application/json`
 
-// Try to extract items from ChatGPT response
-try {
-  const parsed = typeof chatgptOutput === 'string' ? JSON.parse(chatgptOutput) : chatgptOutput;
-  
-  if (Array.isArray(parsed)) {
-    items = parsed;
-  } else if (parsed.items && Array.isArray(parsed.items)) {
-    items = parsed.items;
-  } else if (parsed.data && Array.isArray(parsed.data)) {
-    items = parsed.data;
-  } else if (typeof parsed === 'object' && parsed !== null) {
-    items = [parsed];
-  }
-} catch (e) {
-  // If parsing fails, wrap the output
-  items = [chatgptOutput];
-}
+**Note:** Your Vercel app automatically handles:
+- Parsing ChatGPT output in various formats
+- Extracting items from the response
+- Supabase connection and insertion
 
-// Insert into Supabase
-const response = await fetch(`${SUPABASE_URL}/rest/v1/parsed_orders`, {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-    'apikey': SUPABASE_ANON_KEY,
-    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-    'Prefer': 'return=minimal'
-  },
-  body: JSON.stringify({
-    session_id: sessionId,
-    items: items,
-    processed: false
-  })
-});
-
-if (!response.ok) {
-  const errorText = await response.text();
-  throw new Error(`Supabase error: ${response.status} - ${errorText}`);
-}
-
-return {
-  success: true,
-  items_count: items.length,
-  session_id: sessionId
-};
-```
-
-3. **Input Data:**
-   - `session_id`: `{{session_id}}` (from webhook trigger - the first step)
-   - `chatgpt_output`: `{{ChatGPT Output}}` (adjust field name to match your ChatGPT step output)
+No code, no Supabase credentials needed in Zapier!
 
 ---
 
-### Option B: Use Local API Route (Requires localtunnel)
+### Option B: Use Local API Route (Development only - Requires localtunnel)
 
-Your app has an API route at `/api/zapier-to-supabase` that receives from Zapier and writes to Supabase.
+For local development, your app has an API route at `/api/zapier-to-supabase` that receives from Zapier and writes to Supabase.
 
 #### Setup:
 
@@ -143,9 +105,10 @@ Your app has an API route at `/api/zapier-to-supabase` that receives from Zapier
 
 1. **User uploads file** → App sends to Zapier webhook with `session_id`
 2. **Zapier processes** → ChatGPT parses the file
-3. **Zapier writes to Supabase** → Either via Code step (Option A) or API route (Option B)
-4. **App polls Supabase** → Checks for new orders with matching `session_id` every 5 seconds
-5. **Modal appears** → User can review and confirm
+3. **Zapier calls Vercel API** → Code step sends data to `https://eventrouter.vercel.app/api/zapier-to-supabase`
+4. **Your app writes to Supabase** → API route handles Supabase connection automatically
+5. **App polls Supabase** → Checks for new orders with matching `session_id` every 5 seconds
+6. **Modal appears** → User can review and confirm
 
 ## Troubleshooting:
 

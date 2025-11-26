@@ -47,7 +47,21 @@ export interface UploadedFile {
   status: 'pending' | 'processing' | 'ready';
 }
 
-// Document Parsing Types
+// Document Parsing Types - New format from AI
+export interface ParsedOrder {
+  order_id: string;
+  client_name: string;
+  pickup_datetime: string;
+  dropoff_datetime: string;
+  venue_name: string;
+  venue_address: string;
+  items: string[]; // Array of item names
+  item_quantities: { [itemName: string]: number }; // Object with item names as keys and quantities as values
+  // UI state
+  id?: string; // Generated for React keys
+}
+
+// Legacy type for backward compatibility (if needed)
 export interface ParsedOrderItem {
   file_id: string;
   order_name: string;
@@ -70,6 +84,6 @@ export interface ParsedOrderItem {
 
 export interface ParsedOrderResponse {
   success: boolean;
-  items: ParsedOrderItem[];
+  items: ParsedOrder[] | ParsedOrderItem[]; // Can handle both formats
   errors?: string[];
 }

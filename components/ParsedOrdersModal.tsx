@@ -1,51 +1,134 @@
 'use client';
 import React, { useState, useEffect } from 'react';
-import { X, Save, Loader2, AlertCircle, CheckCircle2, Edit2 } from 'lucide-react';
-import { ParsedOrderItem } from '../types';
+import { X, Save, Loader2, AlertCircle, CheckCircle2, Edit2, Upload, Send, Zap, CheckCircle } from 'lucide-react';
+import { ParsedOrder, ParsedOrderItem } from '../types';
+
+type LoadingStage = 'idle' | 'uploading' | 'sending' | 'processing' | 'complete';
 
 interface ParsedOrdersModalProps {
-  items: ParsedOrderItem[];
+  items: ParsedOrder[] | ParsedOrderItem[];
+  loadingStage?: LoadingStage;
   onClose: () => void;
-  onSave: (items: ParsedOrderItem[]) => void;
+  onSave: (items: ParsedOrder[] | ParsedOrderItem[]) => void;
 }
 
-export const ParsedOrdersModal: React.FC<ParsedOrdersModalProps> = ({ items, onClose, onSave }) => {
-  const [processedItems, setProcessedItems] = useState<ParsedOrderItem[]>([]);
+export const ParsedOrdersModal: React.FC<ParsedOrdersModalProps> = ({ items, loadingStage = 'idle', onClose, onSave }) => {
+  const [processedItems, setProcessedItems] = useState<ParsedOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [editingItem, setEditingItem] = useState<string | null>(null);
+  const [pollingAttempts, setPollingAttempts] = useState(0);
 
   useEffect(() => {
-    // If items array is empty, we're still loading
-    if (items.length === 0) {
+    // If items array is empty and we're not in a loading stage, we're still loading
+    if (items.length === 0 && loadingStage !== 'complete') {
       setLoading(true);
       setProcessedItems([]);
       return;
     }
 
-    // Add IDs to items for React keys
-    const itemsWithIds = items.map((item, index) => ({
-      ...item,
-      id: item.id || `item-${index}`,
-      needs_venue_input: false,
-      needs_product_input: false,
-    }));
+    // If we have items, process them
+    if (items.length > 0) {
+      // Check if it's the new format (ParsedOrder) or old format (ParsedOrderItem)
+      const isNewFormat = items[0] && 'order_id' in items[0];
+      
+      if (isNewFormat) {
+        // New format: ParsedOrder[]
+        const ordersWithIds = (items as ParsedOrder[]).map((item, index) => ({
+          ...item,
+          id: item.id || `order-${index}`,
+        }));
+        setProcessedItems(ordersWithIds);
+      } else {
+        // Old format: ParsedOrderItem[] - convert to new format for display
+        // Group by order and convert to new format
+        const orderMap = new Map<string, ParsedOrder>();
+        
+        (items as ParsedOrderItem[]).forEach((item) => {
+          const orderKey = item.order_name || item.file_id;
+          if (!orderMap.has(orderKey)) {
+            orderMap.set(orderKey, {
+              order_id: item.order_name || item.file_id,
+              client_name: item.order_name || 'Unknown Client',
+              pickup_datetime: item.pickup_time || '',
+              dropoff_datetime: item.dropoff_time || '',
+              venue_name: item.venue_name || '',
+              venue_address: item.venue_address || '',
+              items: [],
+              item_quantities: {},
+              id: `order-${orderMap.size}`,
+            });
+          }
+          const order = orderMap.get(orderKey)!;
+          if (item.item_name) {
+            order.items.push(item.item_name);
+            order.item_quantities[item.item_name] = item.quantity || 0;
+          }
+        });
+        
+        setProcessedItems(Array.from(orderMap.values()));
+      }
+      
+      setLoading(false);
+    }
+  }, [items, loadingStage]);
 
-    setProcessedItems(itemsWithIds);
-    setLoading(false);
-  }, [items]);
+  // Update polling attempts counter when in processing stage
+  useEffect(() => {
+    if (loadingStage === 'processing') {
+      const interval = setInterval(() => {
+        setPollingAttempts(prev => prev + 1);
+      }, 5000); // Update every 5 seconds (polling interval)
+      return () => clearInterval(interval);
+    } else {
+      setPollingAttempts(0);
+    }
+  }, [loadingStage]);
+
+  // Get progress percentage based on stage
+  const getProgress = (): number => {
+    switch (loadingStage) {
+      case 'uploading': return 20;
+      case 'sending': return 40;
+      case 'processing': return Math.min(40 + (pollingAttempts * 2), 95); // Gradually increase up to 95%
+      case 'complete': return 100;
+      default: return 0;
+    }
+  };
+
+  // Get stage message
+  const getStageMessage = (): string => {
+    switch (loadingStage) {
+      case 'uploading': return 'Preparing files for upload...';
+      case 'sending': return 'Sending files to Zapier...';
+      case 'processing': return `Processing with AI... (${pollingAttempts * 5}s)`;
+      case 'complete': return 'Processing complete!';
+      default: return 'Loading...';
+    }
+  };
+
+  // Get stage icon
+  const getStageIcon = () => {
+    switch (loadingStage) {
+      case 'uploading': return <Upload className="w-5 h-5" />;
+      case 'sending': return <Send className="w-5 h-5" />;
+      case 'processing': return <Zap className="w-5 h-5 animate-pulse" />;
+      case 'complete': return <CheckCircle className="w-5 h-5" />;
+      default: return <Loader2 className="w-5 h-5 animate-spin" />;
+    }
+  };
 
   const handleSave = async () => {
     setSaving(true);
     
     try {
-      // Validate all items have required data
-      const invalidItems = processedItems.filter(
-        item => !item.venue_match || !item.product_match
+      // Validate all orders have required data
+      const invalidOrders = processedItems.filter(
+        order => !order.venue_name || !order.client_name || order.items.length === 0
       );
 
-      if (invalidItems.length > 0) {
-        alert(`Please fill in missing venue or product data for ${invalidItems.length} item(s) before saving.`);
+      if (invalidOrders.length > 0) {
+        alert(`Please fill in missing data for ${invalidOrders.length} order(s) before saving.`);
         setSaving(false);
         return;
       }
@@ -62,23 +145,98 @@ export const ParsedOrdersModal: React.FC<ParsedOrdersModalProps> = ({ items, onC
     }
   };
 
-  const updateItem = (itemId: string, field: keyof ParsedOrderItem, value: any) => {
+  const updateOrder = (orderId: string, field: keyof ParsedOrder, value: any) => {
     setProcessedItems(prev =>
-      prev.map(item =>
-        item.id === itemId
-          ? { ...item, [field]: value }
-          : item
+      prev.map(order =>
+        order.id === orderId
+          ? { ...order, [field]: value }
+          : order
       )
     );
   };
 
-  if (loading) {
+  const updateItemQuantity = (orderId: string, itemName: string, quantity: number) => {
+    setProcessedItems(prev =>
+      prev.map(order => {
+        if (order.id === orderId) {
+          const newQuantities = { ...order.item_quantities };
+          newQuantities[itemName] = quantity;
+          return { ...order, item_quantities: newQuantities };
+        }
+        return order;
+      })
+    );
+  };
+
+  // Show loading state with progress bar
+  if (loading || loadingStage !== 'complete') {
+    const progress = getProgress();
+    
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-        <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full mx-4">
-          <div className="flex flex-col items-center gap-4">
-            <Loader2 className="w-8 h-8 animate-spin text-accent" />
-            <p className="text-sm text-subtle">Loading parsed orders...</p>
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in">
+        <div className="bg-white rounded-3xl shadow-2xl p-8 max-w-md w-full mx-4 animate-scale-in">
+          <div className="flex flex-col items-center gap-6">
+            {/* Icon */}
+            <div className={`w-16 h-16 rounded-full flex items-center justify-center ${
+              loadingStage === 'complete' 
+                ? 'bg-green-100 text-green-600' 
+                : 'bg-accent/10 text-accent'
+            }`}>
+              {getStageIcon()}
+            </div>
+
+            {/* Title */}
+            <div className="text-center">
+              <h3 className="text-lg font-semibold text-primary mb-1">
+                Processing Your Files
+              </h3>
+              <p className="text-sm text-subtle">
+                {getStageMessage()}
+              </p>
+            </div>
+
+            {/* Progress Bar */}
+            <div className="w-full">
+              <div className="w-full bg-slate-200 rounded-full h-2.5 overflow-hidden">
+                <div 
+                  className={`h-full rounded-full transition-all duration-500 ease-out ${
+                    loadingStage === 'complete'
+                      ? 'bg-green-500'
+                      : 'bg-accent'
+                  }`}
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+              <div className="flex justify-between items-center mt-2">
+                <div className="flex gap-4 text-xs text-subtle">
+                  <span className={`flex items-center gap-1 ${loadingStage === 'uploading' || loadingStage === 'sending' || loadingStage === 'processing' || loadingStage === 'complete' ? 'text-accent font-medium' : ''}`}>
+                    {loadingStage !== 'idle' && loadingStage !== 'uploading' && <CheckCircle className="w-3 h-3" />}
+                    Upload
+                  </span>
+                  <span className={`flex items-center gap-1 ${loadingStage === 'sending' || loadingStage === 'processing' || loadingStage === 'complete' ? 'text-accent font-medium' : ''}`}>
+                    {loadingStage !== 'idle' && loadingStage !== 'uploading' && loadingStage !== 'sending' && <CheckCircle className="w-3 h-3" />}
+                    Send
+                  </span>
+                  <span className={`flex items-center gap-1 ${loadingStage === 'processing' || loadingStage === 'complete' ? 'text-accent font-medium' : ''}`}>
+                    {loadingStage === 'complete' && <CheckCircle className="w-3 h-3" />}
+                    Process
+                  </span>
+                </div>
+                <span className="text-xs text-subtle font-medium">{progress}%</span>
+              </div>
+            </div>
+
+            {/* Status message for processing */}
+            {loadingStage === 'processing' && (
+              <div className="text-center">
+                <p className="text-xs text-subtle">
+                  AI is extracting order information from your documents...
+                </p>
+                <p className="text-xs text-subtle mt-1">
+                  This usually takes 10-30 seconds
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -107,109 +265,106 @@ export const ParsedOrdersModal: React.FC<ParsedOrdersModalProps> = ({ items, onC
           </button>
         </div>
 
-        {/* Table */}
+        {/* Orders List */}
         <div className="flex-1 overflow-y-auto p-6">
-          <table className="w-full">
-            <thead className="bg-slate-50 sticky top-0">
-              <tr>
-                <th className="px-4 py-3 text-left text-xs font-bold text-subtle uppercase tracking-wider">Order</th>
-                <th className="px-4 py-3 text-left text-xs font-bold text-subtle uppercase tracking-wider">Event Date</th>
-                <th className="px-4 py-3 text-left text-xs font-bold text-subtle uppercase tracking-wider">Venue</th>
-                <th className="px-4 py-3 text-left text-xs font-bold text-subtle uppercase tracking-wider">Product</th>
-                <th className="px-4 py-3 text-left text-xs font-bold text-subtle uppercase tracking-wider">Quantity</th>
-                <th className="px-4 py-3 text-left text-xs font-bold text-subtle uppercase tracking-wider">Rack Count</th>
-                <th className="px-4 py-3 text-left text-xs font-bold text-subtle uppercase tracking-wider">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {processedItems.map((item) => (
-                <tr
-                  key={item.id}
-                  className={`hover:bg-slate-50 transition-colors ${
-                    item.needs_venue_input || item.needs_product_input
-                      ? 'bg-yellow-50/50'
-                      : ''
-                  }`}
-                >
-                  <td className="px-4 py-3">
-                    <div className="text-sm font-medium text-primary">{item.order_name}</div>
-                    <div className="text-xs text-subtle">{item.file_id}</div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="text-sm text-primary">{item.event_date}</div>
-                    <div className="text-xs text-subtle">
-                      {item.pickup_time} - {item.dropoff_time}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1">
-                        <div className="text-sm font-medium text-primary">{item.venue_name}</div>
-                        <div className="text-xs text-subtle">{item.venue_address}</div>
+          <div className="space-y-6">
+            {processedItems.map((order) => (
+              <div
+                key={order.id}
+                className="bg-slate-50 rounded-xl p-6 border border-slate-200"
+              >
+                {/* Order Header */}
+                <div className="grid grid-cols-2 gap-4 mb-4 pb-4 border-b border-slate-200">
+                  <div>
+                    <label className="text-xs font-medium text-subtle uppercase tracking-wider">Order ID</label>
+                    <input
+                      type="text"
+                      value={order.order_id}
+                      onChange={(e) => updateOrder(order.id!, 'order_id', e.target.value)}
+                      className="w-full mt-1 px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-subtle uppercase tracking-wider">Client Name</label>
+                    <input
+                      type="text"
+                      value={order.client_name}
+                      onChange={(e) => updateOrder(order.id!, 'client_name', e.target.value)}
+                      className="w-full mt-1 px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-subtle uppercase tracking-wider">Pickup Date/Time</label>
+                    <input
+                      type="text"
+                      value={order.pickup_datetime}
+                      onChange={(e) => updateOrder(order.id!, 'pickup_datetime', e.target.value)}
+                      className="w-full mt-1 px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent"
+                      placeholder="YYYY-MM-DD HH:MM"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-subtle uppercase tracking-wider">Dropoff Date/Time</label>
+                    <input
+                      type="text"
+                      value={order.dropoff_datetime}
+                      onChange={(e) => updateOrder(order.id!, 'dropoff_datetime', e.target.value)}
+                      className="w-full mt-1 px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent"
+                      placeholder="YYYY-MM-DD HH:MM"
+                    />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="text-xs font-medium text-subtle uppercase tracking-wider">Venue Name</label>
+                    <input
+                      type="text"
+                      value={order.venue_name}
+                      onChange={(e) => updateOrder(order.id!, 'venue_name', e.target.value)}
+                      className="w-full mt-1 px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent"
+                    />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="text-xs font-medium text-subtle uppercase tracking-wider">Venue Address</label>
+                    <input
+                      type="text"
+                      value={order.venue_address}
+                      onChange={(e) => updateOrder(order.id!, 'venue_address', e.target.value)}
+                      className="w-full mt-1 px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent"
+                    />
+                  </div>
+                </div>
+
+                {/* Items List */}
+                <div>
+                  <label className="text-xs font-medium text-subtle uppercase tracking-wider mb-2 block">Items</label>
+                  <div className="space-y-2">
+                    {order.items.map((itemName, index) => (
+                      <div key={index} className="flex items-center gap-3 p-2 bg-white rounded-lg">
+                        <div className="flex-1">
+                          <span className="text-sm font-medium text-primary">{itemName}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <label className="text-xs text-subtle">Quantity:</label>
+                          <input
+                            type="number"
+                            value={order.item_quantities[itemName] || 0}
+                            onChange={(e) => updateItemQuantity(order.id!, itemName, parseInt(e.target.value) || 0)}
+                            className="w-20 px-2 py-1 text-sm border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-accent"
+                            min="0"
+                          />
+                        </div>
                       </div>
-                      {item.venue_match ? (
-                        <div title="Venue matched">
-                          <CheckCircle2 size={16} className="text-green-500" />
-                        </div>
-                      ) : (
-                        <div title="Venue needs input">
-                          <AlertCircle size={16} className="text-yellow-500" />
-                        </div>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <div className="text-sm font-medium text-primary">{item.item_name}</div>
-                      {item.product_match ? (
-                        <div title="Product matched">
-                          <CheckCircle2 size={16} className="text-green-500" />
-                        </div>
-                      ) : (
-                        <div title="Product needs input">
-                          <AlertCircle size={16} className="text-yellow-500" />
-                        </div>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <input
-                      type="number"
-                      value={item.quantity}
-                      onChange={(e) => updateItem(item.id!, 'quantity', parseInt(e.target.value) || 0)}
-                      className="w-20 px-2 py-1 text-sm border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-accent"
-                    />
-                  </td>
-                  <td className="px-4 py-3">
-                    <input
-                      type="number"
-                      value={item.rack_count || ''}
-                      onChange={(e) => updateItem(item.id!, 'rack_count', e.target.value ? parseInt(e.target.value) : undefined)}
-                      className="w-20 px-2 py-1 text-sm border border-slate-300 rounded focus:outline-none focus:ring-1 focus:ring-accent"
-                      placeholder="—"
-                    />
-                  </td>
-                  <td className="px-4 py-3">
-                    {item.needs_venue_input || item.needs_product_input ? (
-                      <span className="text-xs font-medium px-2 py-1 rounded-full bg-yellow-100 text-yellow-700">
-                        Needs Input
-                      </span>
-                    ) : (
-                      <span className="text-xs font-medium px-2 py-1 rounded-full bg-green-100 text-green-700">
-                        Ready
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
 
         {/* Footer */}
         <div className="flex items-center justify-between p-6 border-t border-slate-200">
           <div className="text-sm text-subtle">
-            {processedItems.filter(item => item.needs_venue_input || item.needs_product_input).length} item(s) need attention
+            {processedItems.length} order(s) ready to save
           </div>
           <div className="flex gap-3">
             <button

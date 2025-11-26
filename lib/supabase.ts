@@ -4,27 +4,45 @@ import { Database } from '../types/database.types';
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
-// Create Supabase client with fallback for build time
-// Use a valid Supabase URL format to pass validation during build
-const getSupabaseUrl = () => {
-  if (supabaseUrl) return supabaseUrl;
-  // Valid Supabase URL format for build time
-  return 'https://xxxxxxxxxxxxx.supabase.co';
+// Create Supabase client with lazy initialization
+let supabaseClient: SupabaseClient<Database> | null = null;
+
+const getSupabaseClient = (): SupabaseClient<Database> => {
+  // Return existing client if already created
+  if (supabaseClient) {
+    return supabaseClient;
+  }
+
+  // Validate environment variables
+  if (!supabaseUrl) {
+    throw new Error('NEXT_PUBLIC_SUPABASE_URL environment variable is not set. Please configure it in your Vercel project settings.');
+  }
+
+  if (!supabaseAnonKey) {
+    throw new Error('NEXT_PUBLIC_SUPABASE_ANON_KEY environment variable is not set. Please configure it in your Vercel project settings.');
+  }
+
+  // Validate that we're not using a secret key
+  if (supabaseAnonKey.startsWith('sb_secret_') || supabaseAnonKey.includes('service_role')) {
+    console.error('ERROR: You are using a SECRET key in the browser! This is a security risk.');
+    console.error('Please use the ANON/PUBLIC key from Supabase Dashboard → Settings → API → anon public key');
+    throw new Error('Invalid API key: Secret keys cannot be used in the browser. Please use the anon/public key.');
+  }
+
+  // Create and cache the client
+  supabaseClient = createClient<Database>(supabaseUrl, supabaseAnonKey);
+  return supabaseClient;
 };
 
-const getSupabaseKey = () => {
-  if (supabaseAnonKey) return supabaseAnonKey;
-  // Valid JWT format for build time (this is a placeholder, not a real key)
-  return 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
-};
-
-// Only validate secret key if we have actual values
-if (supabaseAnonKey && (supabaseAnonKey.startsWith('sb_secret_') || supabaseAnonKey.includes('service_role'))) {
-  console.error('ERROR: You are using a SECRET key in the browser! This is a security risk.');
-  console.error('Please use the ANON/PUBLIC key from Supabase Dashboard → Settings → API → anon public key');
-  throw new Error('Invalid API key: Secret keys cannot be used in the browser. Please use the anon/public key.');
-}
-
-// Create Supabase client
-export const supabase = createClient<Database>(getSupabaseUrl(), getSupabaseKey());
+// Export a getter function that creates the client on first use
+export const supabase = new Proxy({} as SupabaseClient<Database>, {
+  get(_target, prop) {
+    const client = getSupabaseClient();
+    const value = (client as any)[prop];
+    if (typeof value === 'function') {
+      return value.bind(client);
+    }
+    return value;
+  }
+});
 

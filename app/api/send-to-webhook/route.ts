@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import FormData from 'form-data';
+import axios from 'axios';
 
 const WEBHOOK_URL = 'https://hooks.zapier.com/hooks/catch/25456946/uzp4aen/';
 
@@ -30,44 +32,53 @@ export async function POST(request: NextRequest) {
       try {
         console.log(`Processing file: ${file.name} (${file.size} bytes)`);
         
-        // Convert file to base64
-        const arrayBuffer = await file.arrayBuffer();
-        const base64 = Buffer.from(arrayBuffer).toString('base64');
+        // Get the file as a raw Buffer (do NOT convert to Blob)
+        const fileBuffer = Buffer.from(await file.arrayBuffer());
         
-        // Send to webhook
-        const response = await fetch(WEBHOOK_URL, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            filename: file.name,
-            filetype: file.type,
-            filesize: file.size,
-            file_data: base64,
-            uploaded_at: new Date().toISOString(),
-            session_id: sessionId,
-          }),
+        // Create FormData using form-data package (not native FormData)
+        const form = new FormData();
+        
+        // Append file as raw Buffer with filename and contentType options
+        // This is what Zapier expects for proper file handling
+        form.append('file', fileBuffer, {
+          filename: file.name,
+          contentType: file.type || 'application/octet-stream'
         });
+        
+        // Get headers from FormData (critical - includes Content-Type with boundary)
+        const formHeaders = form.getHeaders();
+        console.log('Form headers from getHeaders():', formHeaders);
+        
+        // Merge session ID header with form headers
+        // IMPORTANT: formHeaders must come first (includes Content-Type with boundary)
+        const headers = {
+          ...formHeaders,
+          'X-Session-ID': sessionId,  // Session ID in header - becomes {{335651859__headers__x-session-id}} in Zapier
+        };
+        console.log('Final headers being sent:', headers);
+        
+        // Use axios instead of fetch - axios handles form-data streams correctly in serverless
+        const response = await axios.post(
+          WEBHOOK_URL,
+          form,  // form-data package
+          { headers: headers }
+        );
 
-        if (!response.ok) {
-          const errorText = await response.text().catch(() => 'Unknown error');
-          throw new Error(`Webhook returned ${response.status}: ${errorText}`);
-        }
-
-        // Zapier webhooks typically return a simple success response
-        const result = await response.json().catch(() => ({ status: 'success' }));
-        console.log(`✅ Successfully sent ${file.name} to webhook:`, result);
+        console.log(`✅ Successfully sent ${file.name} to webhook:`, response.data);
+        const result = response.data;
         results.push({ 
           filename: file.name, 
           success: true, 
           webhook_response: result 
         });
-      } catch (error) {
+      } catch (error: any) {
         console.error(`❌ Error sending ${file.name}:`, error);
+        const errorMessage = error?.response?.data 
+          ? JSON.stringify(error.response.data)
+          : error?.message || 'Unknown error';
         errors.push({
           filename: file.name,
-          error: error instanceof Error ? error.message : 'Unknown error',
+          error: errorMessage,
         });
       }
     }
