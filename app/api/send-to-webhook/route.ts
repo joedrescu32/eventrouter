@@ -38,12 +38,9 @@ export async function POST(request: NextRequest) {
         // Create FormData using form-data package (not native FormData)
         const form = new FormData();
         
-        // Append file as raw Buffer with filename and contentType options
-        // This is what Zapier expects for proper file handling
-        form.append('file', fileBuffer, {
-          filename: file.name,
-          contentType: file.type || 'application/octet-stream'
-        });
+        // Append file as raw Buffer with filename (no options object)
+        // Simple format: field name, buffer, filename
+        form.append('file', fileBuffer, file.name);
         
         // Get headers from FormData (critical - includes Content-Type with boundary)
         const formHeaders = form.getHeaders();
